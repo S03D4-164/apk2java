@@ -1,0 +1,83 @@
+#!/bin/bash
+# this requires executables besides JRE
+#  apktool,dex2jar,enjarify,cfr,procyon,krakatau
+
+if [[ $# -eq 0 || $1 == "--help" || $1 == "-help" ]];then
+	echo "usage: $0 APK_FILE_NAME" && exit 
+fi
+
+SUFFIX=\.${1##*.}
+echo "Starting $SUFFIX Decompile"
+
+APK_NAME=`basename $1`
+c=`basename $APK_NAME $SUFFIX`
+FULL_PTH=`readlink -f $1`
+CDIR=`dirname "$FULL_PTH"`
+SRC_DIR=$CDIR"/"$APK_NAME"_src"
+
+#Checks if the file exists.
+if [[ ! -f "$FULL_PTH" ]]; then
+    echo "File not found." && exit
+fi
+
+TOOL_DIR="/opt/tools"
+export PATH="$TOOL_DIR:$PATH"
+
+if [[ $SUFFIX == ".apk" ]];then
+    echo "Extracting files via APKTool"
+    apktool decode -f "$CDIR/$APK_NAME" -o "$SRC_DIR"
+fi
+
+mkdir -v -p "$SRC_DIR"/jar
+
+D2J_FILE="$SRC_DIR"/jar/"$c"-dex2jar.jar
+if [[ ! -x "$D2J_FILE" ]];then
+    d2j-dex2jar.sh "$CDIR"/"$APK_NAME" -o "$D2J_FILE" > "$D2J_FILE".log 2>&1 &
+fi
+
+ENJ_FILE="$SRC_DIR"/jar/"$c"-enjarify.jar
+if [[ ! -x "$ENJ_FILE" ]];then
+    enjarify.sh "$CDIR/$APK_NAME" -o  "$ENJ_FILE" > "$ENJ_FILE".log 2>&1 &
+fi
+
+#SIMPLI_FILE=$SRC_DIR"/jar/"$c"-simplify.jar"
+#simplify -q "$CDIR/$APK_NAME" -o  "$SIMPLI_FILE" &
+
+wait && ls "$SRC_DIR"/jar
+
+function decompile(){
+    JAR=`basename $1`
+
+    CFR="java -jar ${TOOL_DIR}/cfr.jar"
+    PRC="java -jar ${TOOL_DIR}/procyon.jar -ss --unicode"
+    LIB="${TOOL_DIR}/android-sdk-linux/platforms/android-24/android.jar"
+    KRA="${TOOL_DIR}/krakatau/decompile.py -p $LIB"
+
+    DECS="cfr procyon krakatau"
+    for d in $DECS;do
+
+        OUTPUT="${SRC_DIR}/src/${JAR}-${d}"
+        LOG="$OUTPUT".log
+        mkdir -v -p "$OUTPUT"
+
+        if [[ $d == "cfr" ]];then
+            $CFR "$1" --outputdir "$OUTPUT" > "$LOG" 2>&1 &
+        elif [[ $d == "procyon" ]];then
+            $PRC "$1" -o "$OUTPUT" > "$LOG" 2>&1 &
+        elif [[ $d == "krakatau" ]];then
+            $KRA "$1" -out "$OUTPUT" > "$LOG" 2>&1 &
+        #elif [[ $d == "jadx" ]];then
+        #    jadx -d "$OUTPUT" "$1" > "$LOG" 2>&1 &
+        #elif [[ $d == "jad" ]];then
+        #    jar -xf $c"_enjarify.jar"
+        #    jad -o -r -sjava -d../src/jad './**/*.class'
+        fi
+    done
+}
+
+for jar_file in `ls "$SRC_DIR"/jar/*.jar`;do
+    decompile "$jar_file"
+done
+
+wait && echo "All Done" && exit
+
